@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Client::with_config(config);
 
-    // #[allow(unused_variables)]
+    #[allow(unused_variables)]
     let response: Value = client
         .chat()
         .create_byot(json!({
@@ -58,16 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     }
             ]
-            "tool_calls":[
-                    {
-                        "id": "call_abc123",
-                        "type": "function",
-                        "function": {
-                        "name": "Read",
-                        "arguments": "{\"file_path\": \"/path/to/file.txt\"}"
-                        }
-                    }
-                    ]
+            
         }))
         .await?;
 
