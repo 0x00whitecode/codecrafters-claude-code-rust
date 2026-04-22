@@ -2,6 +2,7 @@ use async_openai::{Client, config::OpenAIConfig};
 use clap::Parser;
 use serde_json::{Value, json};
 use std::{env, process};
+use std::process::Command;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -28,7 +29,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Client::with_config(config);
 
-    // conversation memory
     let mut messages = vec![json!({
         "role": "user",
         "content": args.prompt
@@ -50,8 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "type": "object",
                                 "properties": {
                                     "file_path": {
-                                        "type": "string",
-                                        "description": "The path to the file to read"
+                                        "type": "string"
                                     }
                                 },
                                 "required": ["file_path"]
@@ -68,12 +67,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "required": ["file_path", "content"],
                                 "properties": {
                                     "file_path": {
-                                        "type": "string",
-                                        "description": "The path of the file to write to"
+                                        "type": "string"
                                     },
                                     "content": {
-                                        "type": "string",
-                                        "description": "The content to write to the file"
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "Bash",
+                            "description": "Execute a shell command",
+                            "parameters": {
+                                "type": "object",
+                                "required": ["command"],
+                                "properties": {
+                                    "command": {
+                                        "type": "string"
                                     }
                                 }
                             }
@@ -84,11 +97,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
 
         let message = &response["choices"][0]["message"];
-
-        // store assistant message
         messages.push(message.clone());
 
-        // handle tool calls
+        // TOOL HANDLING
         if let Some(tool_calls) = message["tool_calls"].as_array() {
             for tool_call in tool_calls {
                 let function_name = tool_call["function"]["name"]
@@ -102,10 +113,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let arguments: Value = serde_json::from_str(arguments_str)?;
 
                 let result = match function_name {
+                    // 📖 READ
                     "Read" => {
-                        let file_path = arguments["file_path"]
-                            .as_str()
-                            .unwrap_or("");
+                        let file_path = arguments["file_path"].as_str().unwrap_or("");
 
                         match std::fs::read_to_string(file_path) {
                             Ok(content) => content,
@@ -113,14 +123,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
+                    // ✍️ WRITE
                     "Write" => {
-                        let file_path = arguments["file_path"]
-                            .as_str()
-                            .unwrap_or("");
-
-                        let content = arguments["content"]
-                            .as_str()
-                            .unwrap_or("");
+                        let file_path = arguments["file_path"].as_str().unwrap_or("");
+                        let content = arguments["content"].as_str().unwrap_or("");
 
                         match std::fs::write(file_path, content) {
                             Ok(_) => format!("Successfully wrote to {}", file_path),
@@ -128,10 +134,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
+                    // 💻 BASH
+                    "Bash" => {
+                        let command = arguments["command"].as_str().unwrap_or("");
+
+                        let output = Command::new("sh")
+                            .arg("-c")
+                            .arg(command)
+                            .output();
+
+                        match output {
+                            Ok(out) => {
+                                let stdout = String::from_utf8_lossy(&out.stdout);
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+
+                                if out.status.success() {
+                                    stdout.to_string()
+                                } else {
+                                    format!("Error:\n{}", stderr)
+                                }
+                            }
+                            Err(e) => format!("Failed to execute command: {}", e),
+                        }
+                    }
+
                     _ => "Unknown tool".to_string(),
                 };
 
-                // send tool result back to model
                 messages.push(json!({
                     "role": "tool",
                     "tool_call_id": tool_call["id"],
@@ -139,11 +168,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }));
             }
 
-            // let model continue after tool execution
             continue;
         }
 
-        // final response from model
+        // FINAL RESPONSE
         if let Some(content) = message["content"].as_str() {
             println!("{}", content);
         }
