@@ -32,63 +32,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "role": "user",
         "content": args.prompt
     })];
-    loop {
 
-    #[allow(unused_variables)]
-    let response: Value = client
-        .chat()
-        .create_byot(json!({
-            "messages": [
-                {
-                    "role": "user",
-                    "content": args.prompt
-                }
-            ],
-            "model": "anthropic/claude-haiku-4.5",
-            "tools": [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "Read",
-                        "description": "Read and return the contents of a file",
-                        "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "file_path": {
-                            "type": "string",
-                            "description": "The path to the file to read"
+    loop {
+        let response: Value = client
+            .chat()
+            .create_byot(json!({
+                "messages": messages,
+                "model": "anthropic/claude-haiku-4.5",
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "Read",
+                            "description": "Read and return the contents of a file",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "file_path": {
+                                        "type": "string",
+                                        "description": "The path to the file to read"
+                                    }
+                                },
+                                "required": ["file_path"]
                             }
-                        },
-                        "required": ["file_path"]
                         }
                     }
-                    }
-            ]
-            
-        }))
-        .await?;
+                ]
+            }))
+            .await?;
 
+        let message = &response["choices"][0]["message"];
 
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    eprintln!("Logs from your program will appear here!");
+        // push assistant message
+        messages.push(message.clone());
 
-     let message = &response["choices"][0]["message"];
-     messages.push(serde_json::to_value(&message)?);
-
-        if let Some(_tool_calls) = message["tool_calls"].as_array() {
-                let tool_call = &message["tool_calls"][0];
+        // 🔧 Handle tool calls
+        if let Some(tool_calls) = message["tool_calls"].as_array() {
+            for tool_call in tool_calls {
                 let function_name = tool_call["function"]["name"].as_str().unwrap();
                 let arguments_str = tool_call["function"]["arguments"].as_str().unwrap();
                 let arguments: Value = serde_json::from_str(arguments_str)?;
-            if function_name == "Read" {
-                let file_path = arguments["file_path"].as_str().unwrap();
-                let contents = std::fs::read_to_string(file_path)?;
-                print!("{}", contents);
+
+                if function_name == "Read" {
+                    let file_path = arguments["file_path"].as_str().unwrap();
+
+                    let result = match std::fs::read_to_string(file_path) {
+                        Ok(content) => content,
+                        Err(e) => format!("Error reading file: {}", e),
+                    };
+
+                    // ✅ Send tool result back to model
+                    messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": result
+                    }));
+                }
             }
-    } else if let Some(content) = message["content"].as_str() {
-        print!("{}", content);
+
+            // continue loop so model can respond after tool execution
+            continue;
+        }
+
+        // ✅ Final response
+        if let Some(content) = message["content"].as_str() {
+            println!("{}", content);
+        }
+
+        break;
     }
-    break
-}
+
     Ok(())
 }
