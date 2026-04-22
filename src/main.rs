@@ -28,6 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Client::with_config(config);
 
+    // conversation memory
     let mut messages = vec![json!({
         "role": "user",
         "content": args.prompt
@@ -37,8 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let response: Value = client
             .chat()
             .create_byot(json!({
-                "messages": messages,
                 "model": "anthropic/claude-haiku-4.5",
+                "messages": messages,
                 "tools": [
                     {
                         "type": "function",
@@ -56,6 +57,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "required": ["file_path"]
                             }
                         }
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "Write",
+                            "description": "Write content to a file",
+                            "parameters": {
+                                "type": "object",
+                                "required": ["file_path", "content"],
+                                "properties": {
+                                    "file_path": {
+                                        "type": "string",
+                                        "description": "The path of the file to write to"
+                                    },
+                                    "content": {
+                                        "type": "string",
+                                        "description": "The content to write to the file"
+                                    }
+                                }
+                            }
+                        }
                     }
                 ]
             }))
@@ -63,38 +85,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let message = &response["choices"][0]["message"];
 
-        // push assistant message
+        // store assistant message
         messages.push(message.clone());
 
-        // 🔧 Handle tool calls
+        // handle tool calls
         if let Some(tool_calls) = message["tool_calls"].as_array() {
             for tool_call in tool_calls {
-                let function_name = tool_call["function"]["name"].as_str().unwrap();
-                let arguments_str = tool_call["function"]["arguments"].as_str().unwrap();
+                let function_name = tool_call["function"]["name"]
+                    .as_str()
+                    .unwrap_or("");
+
+                let arguments_str = tool_call["function"]["arguments"]
+                    .as_str()
+                    .unwrap_or("{}");
+
                 let arguments: Value = serde_json::from_str(arguments_str)?;
 
-                if function_name == "Read" {
-                    let file_path = arguments["file_path"].as_str().unwrap();
+                let result = match function_name {
+                    "Read" => {
+                        let file_path = arguments["file_path"]
+                            .as_str()
+                            .unwrap_or("");
 
-                    let result = match std::fs::read_to_string(file_path) {
-                        Ok(content) => content,
-                        Err(e) => format!("Error reading file: {}", e),
-                    };
+                        match std::fs::read_to_string(file_path) {
+                            Ok(content) => content,
+                            Err(e) => format!("Error reading file: {}", e),
+                        }
+                    }
 
-                    // ✅ Send tool result back to model
-                    messages.push(json!({
-                        "role": "tool",
-                        "tool_call_id": tool_call["id"],
-                        "content": result
-                    }));
-                }
+                    "Write" => {
+                        let file_path = arguments["file_path"]
+                            .as_str()
+                            .unwrap_or("");
+
+                        let content = arguments["content"]
+                            .as_str()
+                            .unwrap_or("");
+
+                        match std::fs::write(file_path, content) {
+                            Ok(_) => format!("Successfully wrote to {}", file_path),
+                            Err(e) => format!("Error writing file: {}", e),
+                        }
+                    }
+
+                    _ => "Unknown tool".to_string(),
+                };
+
+                // send tool result back to model
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "content": result
+                }));
             }
 
-            // continue loop so model can respond after tool execution
+            // let model continue after tool execution
             continue;
         }
 
-        // ✅ Final response
+        // final response from model
         if let Some(content) = message["content"].as_str() {
             println!("{}", content);
         }
