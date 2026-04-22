@@ -99,7 +99,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let message = &response["choices"][0]["message"];
         messages.push(message.clone());
 
-        // TOOL HANDLING
         if let Some(tool_calls) = message["tool_calls"].as_array() {
             for tool_call in tool_calls {
                 let function_name = tool_call["function"]["name"]
@@ -113,7 +112,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let arguments: Value = serde_json::from_str(arguments_str)?;
 
                 let result = match function_name {
-                    // 📖 READ
                     "Read" => {
                         let file_path = arguments["file_path"].as_str().unwrap_or("");
 
@@ -123,7 +121,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    // ✍️ WRITE
                     "Write" => {
                         let file_path = arguments["file_path"].as_str().unwrap_or("");
                         let content = arguments["content"].as_str().unwrap_or("");
@@ -134,7 +131,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    // 💻 BASH
                     "Bash" => {
                         let command = arguments["command"].as_str().unwrap_or("");
 
@@ -171,7 +167,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        // FINAL RESPONSE
         if let Some(content) = message["content"].as_str() {
             println!("{}", content);
         }
